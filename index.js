@@ -1,6 +1,6 @@
 const express = require('express')
 const cors = require('cors')
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, OrderedBulkOperation, ObjectId } = require('mongodb');
 const app = express()
 const port = 5000
 
@@ -35,6 +35,24 @@ async function run() {
 
     })
 
+    app.get('/partners/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const objectId = new ObjectId(id);
+
+    const result = await partnersCollection.findOne({ _id: objectId });
+
+    if (!result) {
+      return res.status(404).send({ message: "Partner not found" });
+    }
+
+    res.send(result);
+  } catch (error) {
+    res.status(400).send({ message: "Invalid ID format" });
+  }
+});
+
+
     app.post('/partners', async (req, res) => {
       const data = req.body;
       // console.log(data);
@@ -45,7 +63,7 @@ async function run() {
       })
     })
     
-
+    
 
 
 

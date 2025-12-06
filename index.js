@@ -25,18 +25,13 @@ const client = new MongoClient(uri, {
 let partnersCollection;
 let partnerRequestsCollection;
 
-/** ==============================
- *  CONNECT TO DATABASE FIRST
- * ============================== */
-
+// Connect to DB
 async function connectDB() {
   try {
     await client.connect();
     const db = client.db("studymate-db");
-
     partnersCollection = db.collection("partners");
     partnerRequestsCollection = db.collection("partnerRequests");
-
     console.log("MongoDB Connected!");
   } catch (err) {
     console.error("MongoDB Connection Failed:", err);
@@ -45,44 +40,46 @@ async function connectDB() {
 
 connectDB();
 
-/** ==============================
- *  ROUTES
- * ============================== */
-
-// TEST ROUTE
+// Routes
 app.get("/", (req, res) => {
   res.send("Server Running Successfully!");
 });
 
-// GET all partners
+/** GET Partners with optional search & sort */
 app.get("/partners", async (req, res) => {
   try {
-    const partners = await partnersCollection.find().toArray();
+    const { subject, sort } = req.query; // e.g., ?subject=math&sort=asc
+    const query = {};
+    if (subject) {
+      query.subject = { $regex: new RegExp(subject, "i") }; // case-insensitive search
+    }
+
+    const sortOrder = sort === "asc" ? 1 : sort === "desc" ? -1 : 0;
+    let cursor = partnersCollection.find(query);
+    if (sortOrder !== 0) {
+      cursor = cursor.sort({ experience: sortOrder });
+    }
+
+    const partners = await cursor.toArray();
     res.send(partners);
   } catch (err) {
+    console.error(err);
     res.status(500).send({ message: "Error loading partners" });
   }
 });
 
-// GET one partner
 app.get("/partners/:id", async (req, res) => {
   try {
-    const id = req.params.id;
     const partner = await partnersCollection.findOne({
-      _id: new ObjectId(id),
+      _id: new ObjectId(req.params.id),
     });
-
-    if (!partner) {
-      return res.status(404).send({ message: "Partner not found" });
-    }
-
+    if (!partner) return res.status(404).send({ message: "Partner not found" });
     res.send(partner);
   } catch {
     res.status(400).send({ message: "Invalid ID" });
   }
 });
 
-// Add Partner
 app.post("/partners", async (req, res) => {
   try {
     const data = req.body;
@@ -93,12 +90,10 @@ app.post("/partners", async (req, res) => {
   }
 });
 
-// Increase partner count
 app.patch("/partners/:id/increase-count", async (req, res) => {
   try {
-    const id = req.params.id;
-    const result = await partnersCollection.updateOne(
-      { _id: new ObjectId(id) },
+    await partnersCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
       { $inc: { partnerCount: 1 } }
     );
     res.send({ success: true });
@@ -107,12 +102,10 @@ app.patch("/partners/:id/increase-count", async (req, res) => {
   }
 });
 
-// Decrease partner count
 app.patch("/partners/:id/decrease-count", async (req, res) => {
   try {
-    const id = req.params.id;
-    const result = await partnersCollection.updateOne(
-      { _id: new ObjectId(id), partnerCount: { $gt: 0 } },
+    await partnersCollection.updateOne(
+      { _id: new ObjectId(req.params.id), partnerCount: { $gt: 0 } },
       { $inc: { partnerCount: -1 } }
     );
     res.send({ success: true });
@@ -121,41 +114,57 @@ app.patch("/partners/:id/decrease-count", async (req, res) => {
   }
 });
 
-// Create request
+// Partner Requests
 app.post("/partner-requests", async (req, res) => {
   try {
     const data = req.body;
-    const result = await partnerRequestsCollection.insertOne({
-      ...data,
-      requestedAt: new Date(),
-    });
+    await partnerRequestsCollection.insertOne({ ...data, requestedAt: new Date() });
     res.send({ success: true });
   } catch {
     res.status(500).send({ message: "Failed to create request" });
   }
 });
 
-// Get requests by email
 app.get("/partner-requests", async (req, res) => {
   try {
     const email = req.query.email;
-    const requests = await partnerRequestsCollection
-      .find({ requestedBy: email })
-      .toArray();
+    const requests = await partnerRequestsCollection.find({ requestedBy: email }).toArray();
     res.send(requests);
   } catch {
     res.status(500).send({ message: "Failed to load requests" });
   }
 });
 
-// Delete request
 app.delete("/partner-requests/:id", async (req, res) => {
   try {
-    const id = req.params.id;
-    await partnerRequestsCollection.deleteOne({ _id: new ObjectId(id) });
+    await partnerRequestsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
     res.send({ success: true });
   } catch {
     res.status(400).send({ message: "Invalid ID" });
+  }
+});
+
+app.patch("/partner-requests/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { partnerName, subject, studyMode } = req.body;
+    const updates = {};
+    if (partnerName) updates.partnerName = partnerName;
+    if (subject) updates.subject = subject;
+    if (studyMode) updates.studyMode = studyMode;
+
+    const result = await partnerRequestsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updates }
+    );
+
+    if (result.matchedCount === 0)
+      return res.status(404).send({ message: "Request not found" });
+
+    res.send({ success: true, updatedFields: updates });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ message: "Failed to update request" });
   }
 });
 

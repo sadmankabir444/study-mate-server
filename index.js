@@ -34,6 +34,16 @@ async function run() {
       res.send(result)
 
     })
+
+    app.post('/partners', async (req, res) => {
+      const data = req.body;
+      // console.log(data);
+      const result = await partnersCollection.insertOne(data)
+      res.send({
+        success: true,
+        result
+      })
+    })
     
 
 

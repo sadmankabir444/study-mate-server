@@ -2,19 +2,17 @@ const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
-const app = express();
-const port = 5000;
 
-// Middlewares
+const app = express();
+const port = process.env.PORT || 5000;
+
+// ======== Middleware ========
 app.use(cors());
 app.use(express.json());
 
+// ======== MongoDB URI ========
+const uri = `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASSWORD}@cluster0.56d1e2x.mongodb.net/?retryWrites=true&w=majority`;
 
-// MongoDB URI
-const uri =
-  `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASSWORD}@cluster0.56d1e2x.mongodb.net/?appName=Cluster0`;
-
-// MongoClient
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -26,150 +24,214 @@ const client = new MongoClient(uri, {
 let partnersCollection;
 let partnerRequestsCollection;
 
-// Connect to DB
-async function connectDB() {
+// ======== Connect DB & Start Server ========
+async function startServer() {
   try {
-    await client.connect();
+    // IMPORTANT: MUST CONNECT
+    // await client.connect();
+    console.log("✅ MongoDB Connected!");
+
     const db = client.db("studymate-db");
     partnersCollection = db.collection("partners");
     partnerRequestsCollection = db.collection("partnerRequests");
-    console.log("MongoDB Connected!");
+
+    // ======== Routes ========
+
+    // Test route
+    app.get("/", (req, res) => {
+      res.send({ message: "✅ StudyMate API Running" });
+    });
+
+    // GET all partners
+    app.get("/partners", async (req, res) => {
+      try {
+        const { subject, sort } = req.query;
+        const query = {};
+
+        if (subject) {
+          query.subject = { $regex: subject, $options: "i" };
+        }
+
+        let cursor = partnersCollection.find(query);
+
+        if (sort === "asc") cursor = cursor.sort({ experience: 1 });
+        if (sort === "desc") cursor = cursor.sort({ experience: -1 });
+
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (err) {
+        console.error("❌ /partners error:", err);
+        res.status(500).send({ message: "Failed to load partners" });
+      }
+    });
+
+    // GET single partner
+    app.get("/partners/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const result = await partnersCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!result) {
+          return res.status(404).send({ message: "Partner not found" });
+        }
+
+        res.send(result);
+      } catch (err) {
+        console.error("❌ single partner error:", err);
+        res.status(400).send({ message: "Invalid ID" });
+      }
+    });
+
+    // POST new partner
+    app.post("/partners", async (req, res) => {
+      try {
+        const data = req.body;
+        const result = await partnersCollection.insertOne(data);
+        res.send({ success: true, insertedId: result.insertedId });
+      } catch (err) {
+        console.error("❌ insert partner error:", err);
+        res.status(500).send({ message: "Failed to add partner" });
+      }
+    });
+
+    // PATCH increase count
+    app.patch("/partners/:id/increase-count", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const result = await partnersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $inc: { partnerCount: 1 } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Partner not found" });
+        }
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error("❌ increase-count error:", err);
+        res.status(500).send({ message: "Failed to increase count" });
+      }
+    });
+
+    // PATCH decrease count
+    app.patch("/partners/:id/decrease-count", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const result = await partnersCollection.updateOne(
+          { _id: new ObjectId(id), partnerCount: { $gt: 0 } },
+          { $inc: { partnerCount: -1 } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res
+            .status(404)
+            .send({ message: "Partner not found or count is already 0" });
+        }
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error("❌ decrease-count error:", err);
+        res.status(500).send({ message: "Failed to decrease count" });
+      }
+    });
+
+    // POST request
+    app.post("/partner-requests", async (req, res) => {
+      try {
+        const data = req.body;
+        const result = await partnerRequestsCollection.insertOne({
+          ...data,
+          requestedAt: new Date(),
+        });
+
+        res.send({ success: true, insertedId: result.insertedId });
+      } catch (err) {
+        console.error("❌ create request error:", err);
+        res.status(500).send({ message: "Failed to create request" });
+      }
+    });
+
+    // GET requests by email
+    app.get("/partner-requests", async (req, res) => {
+      try {
+        const email = req.query.email;
+
+        if (!email) {
+          return res.send([]);
+        }
+
+        const result = await partnerRequestsCollection
+          .find({ requestedBy: email })
+          .toArray();
+
+        res.send(result);
+      } catch (err) {
+        console.error("❌ load requests error:", err);
+        res.status(500).send({ message: "Failed to load requests" });
+      }
+    });
+
+    // DELETE request
+    app.delete("/partner-requests/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const result = await partnerRequestsCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ message: "Request not found" });
+        }
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error("❌ delete request error:", err);
+        res.status(400).send({ message: "Invalid ID" });
+      }
+    });
+
+    // UPDATE request
+    app.patch("/partner-requests/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { partnerName, subject, studyMode } = req.body;
+
+        const updateData = {};
+        if (partnerName) updateData.partnerName = partnerName;
+        if (subject) updateData.subject = subject;
+        if (studyMode) updateData.studyMode = studyMode;
+
+        const result = await partnerRequestsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Request not found" });
+        }
+
+        res.send({ success: true, updated: updateData });
+      } catch (err) {
+        console.error("❌ update request error:", err);
+        res.status(500).send({ message: "Failed to update request" });
+      }
+    });
+
+    // 404 fallback
+    app.use((req, res) => {
+      res.status(404).send({ message: "Route not found" });
+    });
+
+    // Start Server
+    app.listen(port, () => {
+      console.log(`🚀 Server running at http://localhost:${port}`);
+    });
   } catch (err) {
-    console.error("MongoDB Connection Failed:", err);
+    console.error("❌ Server start failed:", err);
   }
 }
 
-connectDB();
-
-// Routes
-app.get("/", (req, res) => {
-  res.send("Server Running Successfully!");
-});
-
-/** GET Partners with optional search & sort */
-app.get("/partners", async (req, res) => {
-  try {
-    const { subject, sort } = req.query; // e.g., ?subject=math&sort=asc
-    const query = {};
-    if (subject) {
-      query.subject = { $regex: new RegExp(subject, "i") }; // case-insensitive search
-    }
-
-    const sortOrder = sort === "asc" ? 1 : sort === "desc" ? -1 : 0;
-    let cursor = partnersCollection.find(query);
-    if (sortOrder !== 0) {
-      cursor = cursor.sort({ experience: sortOrder });
-    }
-
-    const partners = await cursor.toArray();
-    res.send(partners);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send({ message: "Error loading partners" });
-  }
-});
-
-app.get("/partners/:id", async (req, res) => {
-  try {
-    const partner = await partnersCollection.findOne({
-      _id: new ObjectId(req.params.id),
-    });
-    if (!partner) return res.status(404).send({ message: "Partner not found" });
-    res.send(partner);
-  } catch {
-    res.status(400).send({ message: "Invalid ID" });
-  }
-});
-
-app.post("/partners", async (req, res) => {
-  try {
-    const data = req.body;
-    const result = await partnersCollection.insertOne(data);
-    res.send({ success: true, result });
-  } catch {
-    res.status(500).send({ message: "Failed to add partner" });
-  }
-});
-
-app.patch("/partners/:id/increase-count", async (req, res) => {
-  try {
-    await partnersCollection.updateOne(
-      { _id: new ObjectId(req.params.id) },
-      { $inc: { partnerCount: 1 } }
-    );
-    res.send({ success: true });
-  } catch {
-    res.status(500).send({ message: "Error increasing count" });
-  }
-});
-
-app.patch("/partners/:id/decrease-count", async (req, res) => {
-  try {
-    await partnersCollection.updateOne(
-      { _id: new ObjectId(req.params.id), partnerCount: { $gt: 0 } },
-      { $inc: { partnerCount: -1 } }
-    );
-    res.send({ success: true });
-  } catch {
-    res.status(500).send({ message: "Error decreasing count" });
-  }
-});
-
-// Partner Requests
-app.post("/partner-requests", async (req, res) => {
-  try {
-    const data = req.body;
-    await partnerRequestsCollection.insertOne({ ...data, requestedAt: new Date() });
-    res.send({ success: true });
-  } catch {
-    res.status(500).send({ message: "Failed to create request" });
-  }
-});
-
-app.get("/partner-requests", async (req, res) => {
-  try {
-    const email = req.query.email;
-    const requests = await partnerRequestsCollection.find({ requestedBy: email }).toArray();
-    res.send(requests);
-  } catch {
-    res.status(500).send({ message: "Failed to load requests" });
-  }
-});
-
-app.delete("/partner-requests/:id", async (req, res) => {
-  try {
-    await partnerRequestsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-    res.send({ success: true });
-  } catch {
-    res.status(400).send({ message: "Invalid ID" });
-  }
-});
-
-app.patch("/partner-requests/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { partnerName, subject, studyMode } = req.body;
-    const updates = {};
-    if (partnerName) updates.partnerName = partnerName;
-    if (subject) updates.subject = subject;
-    if (studyMode) updates.studyMode = studyMode;
-
-    const result = await partnerRequestsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updates }
-    );
-
-    if (result.matchedCount === 0)
-      return res.status(404).send({ message: "Request not found" });
-
-    res.send({ success: true, updatedFields: updates });
-  } catch (err) {
-    console.error(err);
-    res.status(500).send({ message: "Failed to update request" });
-  }
-});
-
-// Server start
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+startServer();
